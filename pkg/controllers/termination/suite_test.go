@@ -189,6 +189,38 @@ var _ = Describe("Termination", func() {
 			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(node))
 			ExpectNotFound(ctx, env.Client, node)
 		})
+		It("should delete nodes that have safe-to-evict on pods", func() {
+			ExpectApplied(ctx, env.Client, node)
+			node = ExpectNodeExists(ctx, env.Client, node.Name)
+			pods := []*v1.Pod{
+				test.Pod(test.PodOptions{
+					NodeName:   node.Name,
+					ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{v1alpha5.SafeToEvictPodAnnotationKey: "true"}},
+				}),
+				test.Pod(test.PodOptions{
+					NodeName:    node.Name,
+					Tolerations: []v1.Toleration{{Operator: v1.TolerationOpExists}},
+				}),
+				test.Pod(test.PodOptions{
+					NodeName:   node.Name,
+					ObjectMeta: metav1.ObjectMeta{OwnerReferences: []metav1.OwnerReference{{Kind: "Node", APIVersion: "v1", Name: node.Name, UID: node.UID}}},
+				}),
+			}
+			for _, pod := range pods {
+				ExpectApplied(ctx, env.Client, pod)
+			}
+			// Trigger eviction
+			Expect(env.Client.Delete(ctx, node)).To(Succeed())
+			for _, pod := range pods {
+				Expect(env.Client.Delete(ctx, pod, &client.DeleteOptions{GracePeriodSeconds: ptr.Int64(30)})).To(Succeed())
+			}
+			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(node))
+			node = ExpectNodeExists(ctx, env.Client, node.Name)
+			// Simulate stuck terminating
+			injectabletime.Now = func() time.Time { return time.Now().Add(1 * time.Minute) }
+			ExpectReconcileSucceeded(ctx, controller, client.ObjectKeyFromObject(node))
+			ExpectNotFound(ctx, env.Client, node)
+		})
 		It("should fail to evict pods that violate a PDB", func() {
 			minAvailable := intstr.FromInt(1)
 			labelSelector := map[string]string{randomdata.SillyName(): randomdata.SillyName()}

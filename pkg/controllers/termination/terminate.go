@@ -70,7 +70,18 @@ func (t *Terminator) drain(ctx context.Context, node *v1.Node) (bool, error) {
 			return false, nil
 		}
 	}
+	// Evict pods due to safe-to-evict
+	safeToEvictPods := []*v1.Pod{}
+	for _, pod := range pods {
+		if val := pod.Annotations[v1alpha5.SafeToEvictPodAnnotationKey]; val == "true" {
+			safeToEvictPods = append(safeToEvictPods, pod)
+			logging.FromContext(ctx).Debugf("Pod %s/%s has safe-to-evict annotation, will drain node", pod.Namespace, pod.Name)
+		}
+	}
 	// Enqueue for eviction
+	if len(safeToEvictPods) > 0 {
+		t.evict(safeToEvictPods)
+	}
 	t.evict(pods)
 	return len(pods) == 0, nil
 }
